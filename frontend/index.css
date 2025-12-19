@@ -162,9 +162,34 @@ body::after {
     font-weight: bold;
 }
 
+.guest-input {
+    display: block;
+    margin: 1.2rem auto;
+    padding: 0.8rem 1rem;
+    width: 80%;
+    max-width: 300px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: #fff;
+    font-family: var(--font-serif);
+    font-size: 1.1rem;
+    transition: all 0.3s ease;
+    text-align: center;
+}
+
+.guest-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 10px rgba(106, 139, 106, 0.5);
+}
+
 /* --- Game View: Lattice Window Layout --- */
 #game-view {
     padding: 0;
+    background-color: #5a4a3a;
+}
+
+#game-view.active {
     display: grid;
     grid-template-columns: 240px 1fr;
     grid-template-rows: auto 1fr auto;
@@ -173,7 +198,6 @@ body::after {
         "status main"
         "status action";
     gap: 2px;
-    background-color: #5a4a3a;
 }
 
 #game-header, #status-panel, #main-content, #action-area {
@@ -474,7 +498,7 @@ body::after {
         border-radius: 0;
         border: none;
     }
-    #game-view {
+    #game-view.active {
         grid-template-columns: 1fr;
         grid-template-rows: auto auto 1fr auto;
         grid-template-areas:

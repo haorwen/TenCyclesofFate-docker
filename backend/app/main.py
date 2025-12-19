@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.info("Application startup...")
+    # Ensure data directory exists for persistence
+    Path("data").mkdir(exist_ok=True)
     state_manager.load_from_json()
     state_manager.start_auto_save_task()
     yield
@@ -103,13 +105,23 @@ async def auth_linuxdo_callback(request: Request):
 @api_router.post("/logout")
 async def logout():
     """
-    Logs the user out by clearing the authentication cookie.
+    Logs the user out by clearing the authentication cookies.
     """
     response = RedirectResponse(url="/")
     response.delete_cookie("token")
+    response.delete_cookie("guest_name")
     return response
 
 # --- Game Routes ---
+@api_router.get("/config")
+async def get_config():
+    """Returns public configuration flags."""
+    logger.info("Config requested")
+    return {
+        "enable_linuxdo_login": settings.ENABLE_LINUXDO_LOGIN,
+        "enable_redemption": settings.ENABLE_REDEMPTION
+    }
+
 @api_router.get("/live/players")
 async def get_live_players():
     """Returns a list of the most recently active players for the live view."""
@@ -117,13 +129,35 @@ async def get_live_players():
 
 @api_router.post("/game/init")
 async def init_game(
+    request: Request,
     current_user: Annotated[dict, Depends(auth.get_current_active_user)],
 ):
     """
     Initializes or retrieves the daily game session for the player.
-    This does NOT start a trial, it just ensures the session for the day exists.
     """
     game_state = await game_logic.get_or_create_daily_session(current_user)
+    
+    # If it's a guest login, set the guest_name cookie for subsequent WS connections
+    x_guest_username = request.headers.get("X-Guest-Username")
+    if x_guest_username and not settings.ENABLE_LINUXDO_LOGIN:
+        from fastapi.responses import JSONResponse
+        response = JSONResponse(content=game_state)
+        # We need to unquote it if it was passed via header
+        import urllib.parse
+        try:
+            cookie_name = urllib.parse.unquote(x_guest_username)
+        except Exception:
+            cookie_name = x_guest_username
+
+        response.set_cookie(
+            "guest_name",
+            value=cookie_name,
+            httponly=True,
+            max_age=3600 * 24, # 1 day
+            samesite="lax",
+        )
+        return response
+        
     return game_state
 
 # --- WebSocket Endpoint ---
@@ -131,23 +165,35 @@ async def init_game(
 async def websocket_endpoint(websocket: WebSocket):
     """Handles WebSocket connections for real-time game state updates."""
     token = websocket.cookies.get("token")
-    if not token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing token")
-        return
-    try:
-        payload = auth.decode_access_token(token)
-        username: str | None = payload.get("sub")
-        if username is None:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token payload")
+    guest_name = websocket.cookies.get("guest_name")
+    
+    if token:
+        try:
+            payload = auth.decode_access_token(token)
+            username: str | None = payload.get("sub")
+            if username is None:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token payload")
+                return
+        except HTTPException:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Token validation failed")
             return
-    except HTTPException:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Token validation failed")
+    elif not settings.ENABLE_LINUXDO_LOGIN:
+        if not guest_name:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing guest identity")
+            return
+        import urllib.parse
+        try:
+            username = f"guest_{urllib.parse.unquote(guest_name)}"
+        except Exception:
+            username = f"guest_{guest_name}"
+    else:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing authentication")
         return
 
     await websocket_manager.connect(websocket, username)
 
     try:
-        user_info = await auth.get_current_user(token)
+        user_info = await auth.get_current_user(request=websocket, token=token, guest_name_cookie=guest_name)
         session = await state_manager.get_session(user_info["username"])
         if session:
             await websocket_manager.send_json_to_player(
@@ -167,14 +213,13 @@ async def websocket_endpoint(websocket: WebSocket):
 async def live_websocket_endpoint(websocket: WebSocket):
     """Handles WebSocket connections for the live viewing system."""
     token = websocket.cookies.get("token")
-    if not token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing token")
-        return
+    guest_name = websocket.cookies.get("guest_name")
+    
     try:
-        user_info = await auth.get_current_user(token)
+        user_info = await auth.get_current_user(request=websocket, token=token, guest_name_cookie=guest_name)
         viewer_id = user_info["username"]
     except HTTPException:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Token validation failed")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication failed")
         return
 
     await websocket_manager.connect(websocket, viewer_id)

@@ -10,7 +10,7 @@ from . import security
 # --- Module-level State ---
 SESSIONS: dict[str, dict] = {}
 _sessions_modified: bool = False
-_data_file_path: Path = Path("game_data.json")
+_data_file_path: Path = Path("data/game_data.json")
 _auto_save_interval: int = 300  # 5 minutes
 
 # --- Logging ---

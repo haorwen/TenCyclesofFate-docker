@@ -4,11 +4,16 @@ const API_BASE_URL = "/api";
 // --- State Management ---
 const appState = {
     gameState: null,
+    config: null,
 };
 
 // --- DOM Elements ---
 const DOMElements = {
     loginView: document.getElementById('login-view'),
+    loginButton: document.querySelector('.login-button'),
+    guestLoginArea: document.getElementById('guest-login-area'),
+    guestUsernameInput: document.getElementById('guest-username'),
+    guestButton: null, // Will be created if needed
     gameView: document.getElementById('game-view'),
     loginError: document.getElementById('login-error'),
     logoutButton: document.getElementById('logout-button'),
@@ -30,9 +35,20 @@ const DOMElements = {
 
 // --- API Client ---
 const api = {
-    async initGame() {
+    async getConfig() {
+        const response = await fetch(`${API_BASE_URL}/config`);
+        if (!response.ok) throw new Error('Failed to fetch config');
+        return response.json();
+    },
+    async initGame(guestUsername = null) {
+        const headers = {};
+        if (guestUsername) {
+            // We'll pass it as a custom header for the initial request
+            headers['X-Guest-Username'] = encodeURIComponent(guestUsername);
+        }
         const response = await fetch(`${API_BASE_URL}/game/init`, {
             method: 'POST',
+            headers: headers
             // No Authorization header needed, relies on HttpOnly cookie
         });
         if (response.status === 401) {
@@ -117,7 +133,10 @@ function showLoading(isLoading) {
     DOMElements.loadingSpinner.style.display = isLoading ? 'flex' : 'none';
     const isProcessing = appState.gameState ? appState.gameState.is_processing : false;
     const buttonsDisabled = isLoading || isProcessing;
-    // DOMElements.loginButton is removed
+    
+    if (DOMElements.loginButton) DOMElements.loginButton.disabled = buttonsDisabled;
+    if (DOMElements.guestButton) DOMElements.guestButton.disabled = buttonsDisabled;
+
     DOMElements.actionInput.disabled = buttonsDisabled;
     DOMElements.actionButton.disabled = buttonsDisabled;
     DOMElements.startTrialButton.disabled = buttonsDisabled;
@@ -250,19 +269,55 @@ function handleAction(actionOverride = null) {
 }
 
 // --- Initialization ---
-async function initializeGame() {
+async function initializeGame(guestUsername = null) {
     showLoading(true);
     try {
-        const initialState = await api.initGame();
+        appState.config = await api.getConfig();
+        const initialState = await api.initGame(guestUsername);
         appState.gameState = initialState;
         render();
         showView('game-view');
         await socketManager.connect();
         console.log("Initialization complete and WebSocket is ready.");
     } catch (error) {
-        // If init fails (e.g. no valid cookie), just show the login view.
-        // The api.initGame function no longer redirects, it just throws an error.
+        if (appState.config && !appState.config.enable_linuxdo_login) {
+             // If login is disabled, try to connect as guest even if init fails initially
+             // But actually initGame for guest should succeed now
+             console.error("Initialization error in guest mode:", error);
+        }
+        
         showView('login-view');
+        
+        // Adjust login view based on config
+        if (appState.config) {
+            if (!appState.config.enable_linuxdo_login) {
+                DOMElements.loginButton.classList.add('hidden');
+                DOMElements.guestLoginArea.classList.remove('hidden');
+                if (!DOMElements.guestButton) {
+                    const btn = document.createElement('button');
+                    btn.textContent = "开启入梦之旅";
+                    btn.className = "login-button"; // Reuse style
+                    btn.onclick = () => {
+                        const username = DOMElements.guestUsernameInput.value.trim();
+                        if (!username) {
+                            DOMElements.loginError.textContent = "请先赐予汝之名号。";
+                            return;
+                        }
+                        DOMElements.loginError.textContent = "";
+                        initializeGame(username);
+                    };
+                    DOMElements.loginView.appendChild(btn);
+                    DOMElements.guestButton = btn;
+                } else {
+                    DOMElements.guestButton.classList.remove('hidden');
+                }
+            } else {
+                DOMElements.guestLoginArea.classList.add('hidden');
+                DOMElements.loginButton.classList.remove('hidden');
+                if (DOMElements.guestButton) DOMElements.guestButton.classList.add('hidden');
+            }
+        }
+
         if (error.message !== 'Unauthorized') {
              console.error(`Session initialization failed: ${error.message}`);
         }

@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import HTTPException, status
 
 from . import state_manager, openai_client, cheat_check, redemption
+from .config import settings
 from .websocket_manager import manager as websocket_manager
 
 # --- Logging ---
@@ -155,6 +156,14 @@ def end_game_and_get_code(
     )
     converted_value = int(converted_value)
 
+    if not settings.ENABLE_REDEMPTION:
+        logger.info(f"Redemption is disabled. Player {player_id} achieved score {converted_value}.")
+        final_message = f"\n\n【天道回响】\n汝此番试炼功德圆满，最终感悟：{converted_value} 分。\n（当前环境已关闭兑换码生成）"
+        return {"final_message": final_message, "redemption_code": "DISABLED"}, {
+            "daily_success_achieved": True,
+            "redemption_code": "DISABLED",
+        }
+
     # Use the new database-integrated redemption code generation
     code_name = f"天道十试-{date.today().isoformat()}-{player_id}"
     redemption_code = redemption.generate_and_insert_redemption_code(
@@ -169,7 +178,7 @@ def end_game_and_get_code(
         }, {}
 
     logger.info(
-        f"Generated and stored DB code {redemption_code} for {player_id} with value {converted_value:.2f}."
+        f"Generated and stored DB code {redemption_code} for {player_id} with value {converted_value}."
     )
     final_message = f"\n\n【天道回响】\n汝此番试炼功德圆满，获得兑换码: {redemption_code}\n请妥善保管，此乃汝应得之天道馈赠。明日此时，可再度问道。"
     return {"final_message": final_message, "redemption_code": redemption_code}, {
