@@ -25,11 +25,11 @@
 
 ### 1. 配置环境变量
 
-在项目根目录下创建 `.env` 文件，并参考.env.example进行配置：
+在项目根目录下创建 `.env` 文件，并参考[.env.example](https://github.com/haorwen/TenCyclesofFate-docker/blob/docker/.env.example)进行配置：
 
 
 ### 2. 使用 Docker Compose 启动
-下载docker-compose.yml，然后
+下载[docker-compose.yml](https://github.com/haorwen/TenCyclesofFate-docker/blob/docker/docker-compose.yml)，然后
 ```bash
 docker-compose up -d
 ```
